@@ -11,15 +11,15 @@
 #include <string>
 #include <vector>
 
-struct PatchSignature {
+struct PatchSig {
     std::string sig_str;
     int offset = 0;
     std::string ref;
-    PatchSignature(const std::string& s, int o = 0, const std::string& r = "") : sig_str(s), offset(o), ref(r) {}
+    PatchSig(const std::string& s, int o = 0, const std::string& r = "") : sig_str(s), offset(o), ref(r) {}
 };
 
 struct PatchDef {
-    std::vector<PatchSignature> signatures;
+    std::vector<PatchSig> signatures;
     std::vector<uint8_t> patch_bytes;
     std::string name;
 };
@@ -31,7 +31,7 @@ struct DetectedPatch {
     std::string name;
 };
 
-unsigned long resolve_ref(const std::vector<uint8_t>& data, int match_offset, const PatchSignature& sig) {
+unsigned long resolve_ref(const std::vector<uint8_t>& data, int match_offset, const PatchSig& sig) {
     if (sig.ref == "call" || sig.ref == "jmp") {
         int instr_offset = match_offset + sig.offset;
         if (static_cast<size_t>(instr_offset) + 5 > data.size()) return instr_offset;
@@ -77,23 +77,23 @@ std::vector<int> find_all_signatures(const std::vector<uint8_t>& data, const std
 std::vector<DetectedPatch> detect_patches(const std::string& filename) {
     std::vector<PatchDef> patch_defs = {
         // NOP patches
-        { { PatchSignature("41 B8 88 13 00 00 E8 ? ? ? ?", 0x6) }, {0x90, 0x90, 0x90, 0x90, 0x90}, "invalidate1" },
-        { { PatchSignature("41 B8 98 3A 00 00 E8 ? ? ? ?", 0x6) }, {0x90, 0x90, 0x90, 0x90, 0x90}, "invalidate2" },
+        { { PatchSig("41 B8 88 13 00 00 E8 ? ? ? ?", 0x6) }, {0x90, 0x90, 0x90, 0x90, 0x90}, "invalidate1" },
+        { { PatchSig("41 B8 98 3A 00 00 E8 ? ? ? ?", 0x6) }, {0x90, 0x90, 0x90, 0x90, 0x90}, "invalidate2" },
 
         // ret0 patch: license_notification
-        { { PatchSignature("48 8d ? ? ? ? ? e8 ? ? ? ? 48 89 c1 ff ? ? ? ? ? ? 8b", 0, "lea") }, {0x48, 0x31, 0xC0, 0xC3}, "license_notification" },
+        { { PatchSig("48 8d ? ? ? ? ? e8 ? ? ? ? 48 89 c1 ff ? ? ? ? ? ? 8b", 0, "lea") }, {0x48, 0x31, 0xC0, 0xC3}, "license_notification" },
 
         // ret0 patch: license_check
         { {
-            PatchSignature("45 31 ? e8 ? ? ? ? 85 c0 75 ? ? 8d", 0x3, "call"),
-            PatchSignature("0f 11 ? ? ? 31 ? 45 31 ? 45 31 ? e8 ? ? ? ?", 0xD, "call"),
-            PatchSignature("e8 ? ? ? ? ? 8b ? ? ? ? ? 85 c0 0f 94 ? ? 74", 0, "call")
+            PatchSig("45 31 ? e8 ? ? ? ? 85 c0 75 ? ? 8d", 0x3, "call"),
+            PatchSig("0f 11 ? ? ? 31 ? 45 31 ? 45 31 ? e8 ? ? ? ?", 0xD, "call"),
+            PatchSig("e8 ? ? ? ? ? 8b ? ? ? ? ? 85 c0 0f 94 ? ? 74", 0, "call")
         }, {0x48, 0x31, 0xC0, 0xC3}, "license_check" },
 
         // ret1 patch: server_validate
         { {
-            PatchSignature("8b 51 ? 48 83 c1 08 e9 ? ? ? ?", 0x7, "jmp"),
-            PatchSignature("56 57 53 48 83 ec ? 89 d6 48 89 cf b9 ? 00 00 00 e8 ? ? ? ?")
+            PatchSig("8b 51 ? 48 83 c1 08 e9 ? ? ? ?", 0x7, "jmp"),
+            PatchSig("56 57 53 48 83 ec ? 89 d6 48 89 cf b9 ? 00 00 00 e8 ? ? ? ?")
         }, {0x48, 0x31, 0xC0, 0x48, 0xFF, 0xC0, 0xC3}, "server_validate" },
     };
 
@@ -122,7 +122,7 @@ std::vector<DetectedPatch> detect_patches(const std::string& filename) {
     return detected;
 }
 
-std::string detect_sublime_version(const std::string& filename) {
+std::string detect_version(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file) return "";
 
@@ -188,8 +188,8 @@ void msgEnd() {
     exit(0);
 }
 
-bool sublimeTextInDir(const std::string& sublime_path) {
-    std::fstream file(sublime_path, std::ios::in | std::ios::out | std::ios::binary);
+bool checkDir(const std::string& s_path) {
+    std::fstream file(s_path, std::ios::in | std::ios::out | std::ios::binary);
     if (!file.is_open()) {
         return false;
     }
@@ -198,27 +198,19 @@ bool sublimeTextInDir(const std::string& sublime_path) {
 }
 
 
-int main() {
-    /// Needs to run as administrator.
-    if (!IsElevated()) {
-        std::cout << "You have to run this program as Administrator." << std::endl;
-        system("PAUSE");
-        return 1;
-    }
-
+int get_patch_option(std::string& s_path) {
     bool auto_path = true;
 
-    /// Get the Sublime Text path.
-    std::string sublime_path = "C:\\Program Files\\Sublime Text\\sublime_text.exe";
-    if (!sublimeTextInDir(sublime_path)) {
-        std::cout << "Enter your Sublime Text path: ";
-        std::getline(std::cin, sublime_path);
-        sublime_path.erase(std::remove(sublime_path.begin(), sublime_path.end(), '\"'), sublime_path.end());
+    s_path = "C:\\Program Files\\Sublime Text\\sublime_text.exe";
+    if (!checkDir(s_path)) {
+        std::cout << "Enter the path: ";
+        std::getline(std::cin, s_path);
+        s_path.erase(std::remove(s_path.begin(), s_path.end(), '\"'), s_path.end());
         auto_path = false;
     }
 
     int option = 0;
-    std::cout << "Sublime Text Crack by @b1uedev.\n" << std::endl;
+    std::cout << "SublimePatch by @b1uedev.\n" << std::endl;
     // Try to check MD5 hash first
     bool hash_found = false;
     std::string detected_version;
@@ -226,7 +218,7 @@ int main() {
     for (const auto& entry : versionMap) {
         std::string hash = entry.first;
         std::string version = entry.second;
-        command = "cmd /c certutil -hashfile \"" + sublime_path  + "\" md5 | find /i \"" + hash + "\" || exit";
+        command = "cmd /c certutil -hashfile \"" + s_path  + "\" md5 | find /i \"" + hash + "\" || exit";
         int wlen = MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, nullptr, 0);
         std::wstring wcommand(wlen, L'\0');
         MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, &wcommand[0], wlen);
@@ -237,7 +229,7 @@ int main() {
 
         if (!CreatePipe(&hChildStdoutRd, &hChildStdoutWr, &saAttr, 0)) {
             std::cerr << "Error creating pipe." << std::endl;
-            return 1;
+            return 0;
         }
 
         STARTUPINFOW si = {};
@@ -276,13 +268,13 @@ int main() {
     if (hash_found) {
         std::cout << "You have version " << detected_version << " installed." << std::endl;
         std::cout << "Press 1 to patch and activate." << std::endl;
-        if (auto_path) std::cout << "Press 2 to manually patch a Sublime Text path." << std::endl;
+        if (auto_path) std::cout << "Press 2 to manually patch a custom path." << std::endl;
         std::cout << "Press 0 to quit." << std::endl;
     } else {
         std::cout << "[WARNING] Could not verify original file by MD5 hash.\n";
-        std::string version = detect_sublime_version(sublime_path);
+        std::string version = detect_version(s_path);
         if (!version.empty()) {
-            std::cout << "Detected Sublime Text version: " << version << std::endl;
+            std::cout << "Detected version: " << version << std::endl;
         } else {
             std::cout << "Could not detect version." << std::endl;
         }
@@ -290,17 +282,31 @@ int main() {
     }
 
     std::cin >> option;
+    return option;
+}
+
+
+int main() {
+    /// Needs to run as administrator.
+    if (!IsElevated()) {
+        std::cout << "You have to run this program as Administrator." << std::endl;
+        system("PAUSE");
+        return 1;
+    }
+
+    std::string s_path;
+    int option = get_patch_option(s_path);
     switch (option) {
     case 1: {
-        std::fstream file(sublime_path, std::ios::in | std::ios::out | std::ios::binary);
+        std::fstream file(s_path, std::ios::in | std::ios::out | std::ios::binary);
         if (!file.is_open()) {
-            std::cout << "\nError: Could not open file for writing. Have you closed Sublime Text entirely?\n" << std::endl;
+            std::cout << "\nError: Could not open file for writing. Have you closed ST entirely?\n" << std::endl;
             system("pause");
             break;
         } else {
-        auto detected = detect_patches(sublime_path);
+        auto detected = detect_patches(s_path);
             if (detected.empty()) {
-                std::cout << "\nNo patches detected. Is your Sublime Text newly installed?\n" << std::endl;
+                std::cout << "\nNo patches detected. Is your ST newly installed?\n" << std::endl;
                 system("pause");
                 break;
             }
@@ -321,7 +327,7 @@ int main() {
                     file.write(reinterpret_cast<const char*>(dp.patch_bytes.data()), dp.patch_bytes.size());
                     file.flush();
 
-                    std::cout << "Modified Data:";
+                    std::cout << "Patched Data:";
                     for (unsigned char byte : dp.patch_bytes) {
                         std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
                     }
@@ -335,26 +341,26 @@ int main() {
     }
     case 2: {
         std::string custom_path;
-        std::cout << "Enter the full path to your Sublime Text executable: ";
+        std::cout << "Enter the full path to your ST executable: ";
         std::cin.ignore();
         std::getline(std::cin, custom_path);
         custom_path.erase(std::remove(custom_path.begin(), custom_path.end(), '\"'), custom_path.end());
 
-        if (!sublimeTextInDir(custom_path)) {
-            std::cout << "\nError: Could not open file. Please check the path and try again. Make sure Sublime Text is not running.\n" << std::endl;
+        if (!checkDir(custom_path)) {
+            std::cout << "\nError: Could not open file. Please check the path and try again. Make sure ST is not running.\n" << std::endl;
             system("pause");
             break;
         }
 
         std::fstream file(custom_path, std::ios::in | std::ios::out | std::ios::binary);
         if (!file.is_open()) {
-            std::cout << "\nError: Could not open file for writing. Have you closed Sublime Text entirely?\n" << std::endl;
+            std::cout << "\nError: Could not open file for writing. Have you closed ST entirely?\n" << std::endl;
             system("pause");
             break;
         } else {
             auto detected = detect_patches(custom_path);
             if (detected.empty()) {
-                std::cout << "\nNo patches detected. Is your Sublime Text newly installed?\n" << std::endl;
+                std::cout << "\nNo patches detected. Is your ST newly installed?\n" << std::endl;
                 system("pause");
                 break;
             }
@@ -375,7 +381,7 @@ int main() {
                     file.write(reinterpret_cast<const char*>(dp.patch_bytes.data()), dp.patch_bytes.size());
                     file.flush();
 
-                    std::cout << "Modified Data:";
+                    std::cout << "Patched Data:";
                     for (unsigned char byte : dp.patch_bytes) {
                         std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
                     }
