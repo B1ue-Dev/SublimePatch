@@ -1,15 +1,30 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <vector>
+
+struct DetectedPatch {
+    unsigned long offset;
+    std::vector<uint8_t> original_bytes;
+    std::vector<uint8_t> patch_bytes;
+    std::string name;
+};
+
+struct s_m_PatchDef {
+    std::string version;
+    std::vector<DetectedPatch> patches;
+};
+
 
 struct PatchSig {
     std::string sig_str;
@@ -24,12 +39,6 @@ struct PatchDef {
     std::string name;
 };
 
-struct DetectedPatch {
-    unsigned long offset;
-    std::vector<uint8_t> original_bytes;
-    std::vector<uint8_t> patch_bytes;
-    std::string name;
-};
 
 unsigned long resolve_ref(const std::vector<uint8_t>& data, int match_offset, const PatchSig& sig) {
     if (sig.ref == "call" || sig.ref == "jmp") {
@@ -149,7 +158,65 @@ std::string toLowercase(const std::string& str) {
     return lowerStr;
 }
 
-std::map<std::string, std::string> versionMap = {
+std::string get_file_md5(const std::string& filepath) {
+    std::string command = "cmd /c certutil -hashfile \"" + filepath + "\" md5";
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, nullptr, 0);
+    std::wstring wcommand(wlen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, &wcommand[0], wlen);
+    LPWSTR lpCommandLine = &wcommand[0];
+
+    SECURITY_ATTRIBUTES saAttr = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE hChildStdoutRd, hChildStdoutWr;
+
+    if (!CreatePipe(&hChildStdoutRd, &hChildStdoutWr, &saAttr, 0)) {
+        return "";
+    }
+
+    STARTUPINFOW si = {};
+    si.cb = sizeof(STARTUPINFOW);
+    PROCESS_INFORMATION pi;
+
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = hChildStdoutWr;
+    si.hStdError = hChildStdoutWr;
+
+    if (CreateProcessW(nullptr, lpCommandLine, nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(hChildStdoutWr);
+
+        char buf[1024];
+        DWORD bytesRead;
+        std::string result;
+        while (ReadFile(hChildStdoutRd, buf, sizeof(buf), &bytesRead, nullptr) && bytesRead > 0) {
+            result.append(buf, bytesRead);
+        }
+
+        CloseHandle(hChildStdoutRd);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+
+        std::istringstream iss(result);
+        std::string line;
+        while (std::getline(iss, line)) {
+            line.erase(std::remove_if(line.begin(), line.end(), ::isspace), line.end());
+            if (line.length() == 32) {
+                bool isHex = true;
+                for (char c : line) {
+                    if (!std::isxdigit(static_cast<unsigned char>(c))) {
+                        isHex = false;
+                        break;
+                    }
+                }
+                if (isHex) {
+                    return toLowercase(line);
+                }
+            }
+        }
+    }
+    return "";
+}
+
+
+std::map<std::string, std::string> s_t_versionMap = {
     {toLowercase("924C781AC4FCD21A2B46C73B07D7BC27"), "4126"},
     {toLowercase("654F4259E066F90F4964E695CF808AD0"), "4143"},
     {toLowercase("15BB398D5663B89A44372EF15F70A46F"), "4152"},
@@ -157,6 +224,25 @@ std::map<std::string, std::string> versionMap = {
     {toLowercase("3874916e032eeffede48b6dad4dd7f3c"), "4192"},
     {toLowercase("671b865fbde25cdcbd0144d3e7baea31"), "4200"}
 };
+
+std::map<std::string, s_m_PatchDef> s_m_versionMap = {
+    {
+        toLowercase("38AD6FC66339A097205ADF7FA484029B"),
+        {
+            "2125",
+            {
+                { 0x00048116, {0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54}, {0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0xC3}, "is_license_valid" },
+                { 0x0004A54E, {0xE8, 0xD5, 0xC3, 0x1D, 0x00}, {0x90, 0x90, 0x90, 0x90, 0x90}, "persistent_license_check_1" },
+                { 0x0004A567, {0xE8, 0xBC, 0xC3, 0x1D, 0x00}, {0x90, 0x90, 0x90, 0x90, 0x90}, "persistent_license_check_2" },
+                { 0x00048DA8, {0x41, 0x57, 0x41, 0x56}, {0x48, 0x31, 0xC0, 0xC3}, "thread_check_license_func" },
+                { 0x00047E0D, {0x41, 0x57, 0x41, 0x56}, {0x48, 0x31, 0xC0, 0xC3}, "thread_license_notification_func" },
+                { 0x0015B1FC, {0x41, 0x57, 0x41, 0x56}, {0x48, 0x31, 0xC0, 0xC3}, "crash_reporter_func" }
+            }
+        }
+    }
+};
+
+
 
 bool IsElevated() {
     bool isElevated = false;
@@ -197,71 +283,95 @@ bool checkDir(const std::string& s_path) {
     return true;
 }
 
+bool resolve_executable_path(const std::string& default_path, const std::string& app_name, std::string& resolved_path) {
+    resolved_path = default_path;
+    if (checkDir(resolved_path)) {
+        return true;
+    }
+    std::cout << "Enter the path to " << app_name << " executable: ";
+    std::getline(std::cin, resolved_path);
+    resolved_path.erase(std::remove(resolved_path.begin(), resolved_path.end(), '\"'), resolved_path.end());
+    return checkDir(resolved_path);
+}
 
-int get_patch_option(std::string& s_path) {
-    bool auto_path = true;
-
-    s_path = "C:\\Program Files\\Sublime Text\\sublime_text.exe";
-    if (!checkDir(s_path)) {
-        std::cout << "Enter the path: ";
-        std::getline(std::cin, s_path);
-        s_path.erase(std::remove(s_path.begin(), s_path.end(), '\"'), s_path.end());
-        auto_path = false;
+bool apply_patches(const std::string& filepath, const std::vector<DetectedPatch>& patches) {
+    std::fstream file(filepath, std::ios::in | std::ios::out | std::ios::binary);
+    if (!file.is_open()) {
+        std::cout << "\nError: Could not open file for writing. Have you closed the application entirely?\n" << std::endl;
+        system("pause");
+        return false;
     }
 
-    int option = 0;
-    std::cout << "SublimePatch by @b1uedev.\n" << std::endl;
-    // Try to check MD5 hash first
-    bool hash_found = false;
-    std::string detected_version;
-    std::string command, processedHashString;
-    for (const auto& entry : versionMap) {
-        std::string hash = entry.first;
-        std::string version = entry.second;
-        command = "cmd /c certutil -hashfile \"" + s_path  + "\" md5 | find /i \"" + hash + "\" || exit";
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, nullptr, 0);
-        std::wstring wcommand(wlen, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, &wcommand[0], wlen);
-        LPWSTR lpCommandLine = &wcommand[0];
+    file.seekg(0, std::ios::end);
+    size_t file_size = file.tellg();
+    file.seekg(0, std::ios::beg);
 
-        SECURITY_ATTRIBUTES saAttr = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-        HANDLE hChildStdoutRd, hChildStdoutWr;
-
-        if (!CreatePipe(&hChildStdoutRd, &hChildStdoutWr, &saAttr, 0)) {
-            std::cerr << "Error creating pipe." << std::endl;
-            return 0;
+    bool success = true;
+    for (const auto& dp : patches) {
+        if (dp.offset + dp.original_bytes.size() > file_size) {
+            std::cout << "Patch offset out of range: " << dp.name << std::endl;
+            success = false;
+            break;
         }
 
-        STARTUPINFOW si = {};
-        si.cb = sizeof(STARTUPINFOW);
-        PROCESS_INFORMATION pi;
+        file.seekg(dp.offset, std::ios::beg);
+        std::vector<unsigned char> read_bytes(dp.original_bytes.size());
+        file.read(reinterpret_cast<char*>(read_bytes.data()), dp.original_bytes.size());
 
-        si.dwFlags = STARTF_USESTDHANDLES;
-        si.hStdOutput = hChildStdoutWr;
-        si.hStdError = hChildStdoutWr;
-
-        if (CreateProcessW(nullptr, lpCommandLine, nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
-            CloseHandle(hChildStdoutWr);
-
-            char buf[1024];
-            DWORD bytesRead;
-            std::string result;
-            while (ReadFile(hChildStdoutRd, buf, sizeof(buf), &bytesRead, nullptr) && bytesRead > 0) {
-                result.append(buf, bytesRead);
+        if (read_bytes == dp.original_bytes) {
+            std::cout << "Offset: 0x" << std::hex << dp.offset << " - " << dp.name << std::endl;
+            std::cout << "Original Data:";
+            for (unsigned char byte : read_bytes) {
+                std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
             }
+            std::cout << std::endl;
 
-            CloseHandle(hChildStdoutRd);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
+            file.seekp(dp.offset, std::ios::beg);
+            file.write(reinterpret_cast<const char*>(dp.patch_bytes.data()), dp.patch_bytes.size());
+            file.flush();
 
-            processedHashString = toLowercase(result);
-            processedHashString.erase(std::remove_if(processedHashString.begin(), processedHashString.end(), ::isspace), processedHashString.end());
-
-            if (hash == processedHashString) {
-                hash_found = true;
-                detected_version = version;
-                break;
+            std::cout << "Patched Data:  ";
+            for (unsigned char byte : dp.patch_bytes) {
+                std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
             }
+            std::cout << std::endl;
+        } else if (read_bytes == dp.patch_bytes) {
+            std::cout << "Offset: 0x" << std::hex << dp.offset << " - " << dp.name << " (Already Patched)" << std::endl;
+        } else {
+            std::cout << "Offset: 0x" << std::hex << dp.offset << " - " << dp.name << " (Byte mismatch, skipping!)" << std::endl;
+            std::cout << "Expected:";
+            for (unsigned char byte : dp.original_bytes) {
+                std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+            }
+            std::cout << "\nActual:  ";
+            for (unsigned char byte : read_bytes) {
+                std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+            }
+            std::cout << std::endl;
+            success = false;
+        }
+    }
+
+    file.close();
+    return success;
+}
+
+
+
+int get_patch_option(std::string& s_path) {
+    bool auto_path = resolve_executable_path("C:\\Program Files\\Sublime Text\\sublime_text.exe", "s_t", s_path);
+
+    int option = 0;
+    std::cout << "s_t Patcher by @b1uedev.\n" << std::endl;
+    // Try to check MD5 hash first
+    std::string hash = get_file_md5(s_path);
+    bool hash_found = false;
+    std::string detected_version;
+    if (!hash.empty()) {
+        auto it = s_t_versionMap.find(hash);
+        if (it != s_t_versionMap.end()) {
+            hash_found = true;
+            detected_version = it->second;
         }
     }
 
@@ -285,6 +395,47 @@ int get_patch_option(std::string& s_path) {
     return option;
 }
 
+void handle_s_m() {
+    std::string s_m_path;
+    std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
+
+    resolve_executable_path("C:\\Program Files\\Sublime Merge\\sublime_merge.exe", "s_m", s_m_path);
+
+    std::string hash = get_file_md5(s_m_path);
+    if (hash.empty()) {
+        std::cout << "Could not calculate MD5 hash of " << s_m_path << std::endl;
+        system("pause");
+        return;
+    }
+
+    auto it = s_m_versionMap.find(hash);
+    if (it == s_m_versionMap.end()) {
+        std::cout << "[WARNING] Unsupported s_m MD5 hash: " << hash << std::endl;
+        std::cout << "We cannot patch unknown versions automatically because offsets are hardcoded." << std::endl;
+        system("pause");
+        return;
+    }
+
+    const auto& def = it->second;
+    std::cout << "Detected s_m version: " << def.version << std::endl;
+    std::cout << "Press 1 to patch and activate." << std::endl;
+    std::cout << "Press 0 to quit." << std::endl;
+
+    int option = 0;
+    std::cin >> option;
+    if (option != 1) {
+        return;
+    }
+
+    std::cout << "\nStarting patch for s_m build " << def.version << "..." << std::endl;
+    if (apply_patches(s_m_path, def.patches)) {
+        msgEnd();
+    } else {
+        std::cout << "\nSome patches failed or were skipped. Please check output." << std::endl;
+        system("pause");
+    }
+}
+
 
 int main() {
     /// Needs to run as administrator.
@@ -294,112 +445,73 @@ int main() {
         return 1;
     }
 
-    std::string s_path;
-    int option = get_patch_option(s_path);
-    switch (option) {
-    case 1: {
-        std::fstream file(s_path, std::ios::in | std::ios::out | std::ios::binary);
-        if (!file.is_open()) {
-            std::cout << "\nError: Could not open file for writing. Have you closed ST entirely?\n" << std::endl;
-            system("pause");
-            break;
-        } else {
-        auto detected = detect_patches(s_path);
+    std::cout << "s_t/s_m Patcher by @b1uedev\n" << std::endl;
+    std::cout << "Select application to patch:\n";
+    std::cout << "1. s_t\n";
+    std::cout << "2. s_m\n";
+    std::cout << "Choose (1-2): ";
+    int choice = 0;
+    std::cin >> choice;
+
+    if (choice == 1) {
+        std::string s_path;
+        int option = get_patch_option(s_path);
+        switch (option) {
+        case 1: {
+            auto detected = detect_patches(s_path);
             if (detected.empty()) {
                 std::cout << "\nNo patches detected. Is your ST newly installed?\n" << std::endl;
                 system("pause");
                 break;
             }
-            for (const auto& dp : detected) {
-                file.seekg(dp.offset, std::ios::beg);
-                std::vector<unsigned char> read_bytes(dp.original_bytes.size());
-                file.read(reinterpret_cast<char*>(read_bytes.data()), dp.original_bytes.size());
-
-                if (read_bytes == dp.original_bytes) {
-                    std::cout << "Offset: 0x" << std::hex << dp.offset <<  " - " << dp.name << std::endl;
-                    std::cout << "Original Data:";
-                    for (unsigned char byte : read_bytes) {
-                        std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-                    }
-                    std::cout << std::endl;
-
-                    file.seekp(dp.offset, std::ios::beg);
-                    file.write(reinterpret_cast<const char*>(dp.patch_bytes.data()), dp.patch_bytes.size());
-                    file.flush();
-
-                    std::cout << "Patched Data:";
-                    for (unsigned char byte : dp.patch_bytes) {
-                        std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-                    }
-                    std::cout << std::endl;
-                }
+            if (apply_patches(s_path, detected)) {
+                msgEnd();
+            } else {
+                std::cout << "\nSome patches failed or were skipped. Please check output." << std::endl;
+                system("pause");
             }
-            file.close();
-        }
-        msgEnd();
-        break;
-    }
-    case 2: {
-        std::string custom_path;
-        std::cout << "Enter the full path to your ST executable: ";
-        std::cin.ignore();
-        std::getline(std::cin, custom_path);
-        custom_path.erase(std::remove(custom_path.begin(), custom_path.end(), '\"'), custom_path.end());
-
-        if (!checkDir(custom_path)) {
-            std::cout << "\nError: Could not open file. Please check the path and try again. Make sure ST is not running.\n" << std::endl;
-            system("pause");
             break;
         }
+        case 2: {
+            std::string custom_path;
+            std::cout << "Enter the full path to your ST executable: ";
+            std::cin.ignore();
+            std::getline(std::cin, custom_path);
+            custom_path.erase(std::remove(custom_path.begin(), custom_path.end(), '\"'), custom_path.end());
 
-        std::fstream file(custom_path, std::ios::in | std::ios::out | std::ios::binary);
-        if (!file.is_open()) {
-            std::cout << "\nError: Could not open file for writing. Have you closed ST entirely?\n" << std::endl;
-            system("pause");
-            break;
-        } else {
+            if (!checkDir(custom_path)) {
+                std::cout << "\nError: Could not open file. Please check the path and try again. Make sure ST is not running.\n" << std::endl;
+                system("pause");
+                break;
+            }
+
             auto detected = detect_patches(custom_path);
             if (detected.empty()) {
                 std::cout << "\nNo patches detected. Is your ST newly installed?\n" << std::endl;
                 system("pause");
                 break;
             }
-            for (const auto& dp : detected) {
-                file.seekg(dp.offset, std::ios::beg);
-                std::vector<unsigned char> read_bytes(dp.original_bytes.size());
-                file.read(reinterpret_cast<char*>(read_bytes.data()), dp.original_bytes.size());
-
-                if (read_bytes == dp.original_bytes) {
-                    std::cout << "Offset: 0x" << std::hex << dp.offset <<  " - " << dp.name << std::endl;
-                    std::cout << "Original Data:";
-                    for (unsigned char byte : read_bytes) {
-                        std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-                    }
-                    std::cout << std::endl;
-
-                    file.seekp(dp.offset, std::ios::beg);
-                    file.write(reinterpret_cast<const char*>(dp.patch_bytes.data()), dp.patch_bytes.size());
-                    file.flush();
-
-                    std::cout << "Patched Data:";
-                    for (unsigned char byte : dp.patch_bytes) {
-                        std::cout << " " << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-                    }
-                    std::cout << std::endl;
-                }
+            if (apply_patches(custom_path, detected)) {
+                msgEnd();
+            } else {
+                std::cout << "\nSome patches failed or were skipped. Please check output." << std::endl;
+                system("pause");
             }
-            file.close();
+            break;
         }
-        msgEnd();
-        break;
-    }
-    case 0:
+        case 0:
+            system("PAUSE");
+            exit(0);
+        default:
+            std::cout << "Invalid input." << std::endl;
+            system("PAUSE");
+            exit(1);
+        }
+    } else if (choice == 2) {
+        handle_s_m();
+    } else {
+        std::cout << "Invalid application choice." << std::endl;
         system("PAUSE");
-        exit(0);
-    default:
-        std::cout << "Invalid input." << std::endl;
-        system("PAUSE");
-        exit(1);
     }
 
     return 0;
