@@ -20,27 +20,27 @@ struct DetectedPatch {
     std::string name;
 };
 
-struct s_m_PatchDef {
+struct g_PatchDef {
     std::string version;
     std::vector<DetectedPatch> patches;
 };
 
 
-struct PatchSig {
+struct e_PatchSig {
     std::string sig_str;
     int offset = 0;
     std::string ref;
-    PatchSig(const std::string& s, int o = 0, const std::string& r = "") : sig_str(s), offset(o), ref(r) {}
+    e_PatchSig(const std::string& s, int o = 0, const std::string& r = "") : sig_str(s), offset(o), ref(r) {}
 };
 
-struct PatchDef {
-    std::vector<PatchSig> signatures;
+struct e_PatchDef {
+    std::vector<e_PatchSig> signatures;
     std::vector<uint8_t> patch_bytes;
     std::string name;
 };
 
 
-unsigned long resolve_ref(const std::vector<uint8_t>& data, int match_offset, const PatchSig& sig) {
+unsigned long e_resolve_ref(const std::vector<uint8_t>& data, int match_offset, const e_PatchSig& sig) {
     if (sig.ref == "call" || sig.ref == "jmp") {
         int instr_offset = match_offset + sig.offset;
         if (static_cast<size_t>(instr_offset) + 5 > data.size()) return instr_offset;
@@ -55,7 +55,7 @@ unsigned long resolve_ref(const std::vector<uint8_t>& data, int match_offset, co
     return static_cast<unsigned long>(match_offset + sig.offset);
 }
 
-std::vector<int> parse_signature(const std::string& sig) {
+std::vector<int> e_parse_signature(const std::string& sig) {
     std::vector<int> pattern;
     std::istringstream iss(sig);
     std::string byte;
@@ -68,7 +68,7 @@ std::vector<int> parse_signature(const std::string& sig) {
     return pattern;
 }
 
-std::vector<int> find_all_signatures(const std::vector<uint8_t>& data, const std::vector<int>& pattern) {
+std::vector<int> e_find_all_signatures(const std::vector<uint8_t>& data, const std::vector<int>& pattern) {
     std::vector<int> matches;
     for (size_t i = 0; i + pattern.size() <= data.size(); ++i) {
         bool match = true;
@@ -83,26 +83,26 @@ std::vector<int> find_all_signatures(const std::vector<uint8_t>& data, const std
     return matches;
 }
 
-std::vector<DetectedPatch> detect_patches(const std::string& filename) {
-    std::vector<PatchDef> patch_defs = {
+std::vector<DetectedPatch> e_detect_patches(const std::string& filename) {
+    std::vector<e_PatchDef> patch_defs = {
         // NOP patches
-        { { PatchSig("41 B8 88 13 00 00 E8 ? ? ? ?", 0x6) }, {0x90, 0x90, 0x90, 0x90, 0x90}, "invalidate1" },
-        { { PatchSig("41 B8 98 3A 00 00 E8 ? ? ? ?", 0x6) }, {0x90, 0x90, 0x90, 0x90, 0x90}, "invalidate2" },
+        { { e_PatchSig("41 B8 88 13 00 00 E8 ? ? ? ?", 0x6) }, {0x90, 0x90, 0x90, 0x90, 0x90}, "invalidate1" },
+        { { e_PatchSig("41 B8 98 3A 00 00 E8 ? ? ? ?", 0x6) }, {0x90, 0x90, 0x90, 0x90, 0x90}, "invalidate2" },
 
         // ret0 patch: license_notification
-        { { PatchSig("48 8d ? ? ? ? ? e8 ? ? ? ? 48 89 c1 ff ? ? ? ? ? ? 8b", 0, "lea") }, {0x48, 0x31, 0xC0, 0xC3}, "license_notification" },
+        { { e_PatchSig("48 8d ? ? ? ? ? e8 ? ? ? ? 48 89 c1 ff ? ? ? ? ? ? 8b", 0, "lea") }, {0x48, 0x31, 0xC0, 0xC3}, "license_notification" },
 
         // ret0 patch: license_check
         { {
-            PatchSig("45 31 ? e8 ? ? ? ? 85 c0 75 ? ? 8d", 0x3, "call"),
-            PatchSig("0f 11 ? ? ? 31 ? 45 31 ? 45 31 ? e8 ? ? ? ?", 0xD, "call"),
-            PatchSig("e8 ? ? ? ? ? 8b ? ? ? ? ? 85 c0 0f 94 ? ? 74", 0, "call")
+            e_PatchSig("45 31 ? e8 ? ? ? ? 85 c0 75 ? ? 8d", 0x3, "call"),
+            e_PatchSig("0f 11 ? ? ? 31 ? 45 31 ? 45 31 ? e8 ? ? ? ?", 0xD, "call"),
+            e_PatchSig("e8 ? ? ? ? ? 8b ? ? ? ? ? 85 c0 0f 94 ? ? 74", 0, "call")
         }, {0x48, 0x31, 0xC0, 0xC3}, "license_check" },
 
         // ret1 patch: server_validate
         { {
-            PatchSig("8b 51 ? 48 83 c1 08 e9 ? ? ? ?", 0x7, "jmp"),
-            PatchSig("56 57 53 48 83 ec ? 89 d6 48 89 cf b9 ? 00 00 00 e8 ? ? ? ?")
+            e_PatchSig("8b 51 ? 48 83 c1 08 e9 ? ? ? ?", 0x7, "jmp"),
+            e_PatchSig("56 57 53 48 83 ec ? 89 d6 48 89 cf b9 ? 00 00 00 e8 ? ? ? ?")
         }, {0x48, 0x31, 0xC0, 0x48, 0xFF, 0xC0, 0xC3}, "server_validate" },
     };
 
@@ -114,11 +114,11 @@ std::vector<DetectedPatch> detect_patches(const std::string& filename) {
     std::vector<DetectedPatch> detected;
     for (const auto& patch : patch_defs) {
         for (const auto& sig : patch.signatures) {
-            auto pattern = parse_signature(sig.sig_str);
-            auto matches = find_all_signatures(data, pattern);
+            auto pattern = e_parse_signature(sig.sig_str);
+            auto matches = e_find_all_signatures(data, pattern);
             if (matches.size() == 1) {
                 int match_offset = matches[0];
-                unsigned long patch_offset = resolve_ref(data, match_offset, sig);
+                unsigned long patch_offset = e_resolve_ref(data, match_offset, sig);
                 if (patch_offset + patch.patch_bytes.size() > data.size()) continue;
                 std::vector<uint8_t> orig(data.begin() + patch_offset, data.begin() + patch_offset + patch.patch_bytes.size());
                 if (orig != patch.patch_bytes) {
@@ -131,7 +131,7 @@ std::vector<DetectedPatch> detect_patches(const std::string& filename) {
     return detected;
 }
 
-std::string detect_version(const std::string& filename) {
+std::string e_detect_version(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file) return "";
 
@@ -216,7 +216,7 @@ std::string get_file_md5(const std::string& filepath) {
 }
 
 
-std::map<std::string, std::string> s_t_versionMap = {
+std::map<std::string, std::string> e_versionMap = {
     {toLowercase("924C781AC4FCD21A2B46C73B07D7BC27"), "4126"},
     {toLowercase("654F4259E066F90F4964E695CF808AD0"), "4143"},
     {toLowercase("15BB398D5663B89A44372EF15F70A46F"), "4152"},
@@ -225,7 +225,7 @@ std::map<std::string, std::string> s_t_versionMap = {
     {toLowercase("671b865fbde25cdcbd0144d3e7baea31"), "4200"}
 };
 
-std::map<std::string, s_m_PatchDef> s_m_versionMap = {
+std::map<std::string, g_PatchDef> g_versionMap = {
     {
         toLowercase("38AD6FC66339A097205ADF7FA484029B"),
         {
@@ -274,8 +274,8 @@ void msgEnd() {
     exit(0);
 }
 
-bool checkDir(const std::string& s_path) {
-    std::fstream file(s_path, std::ios::in | std::ios::out | std::ios::binary);
+bool checkDir(const std::string& path) {
+    std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
     if (!file.is_open()) {
         return false;
     }
@@ -358,18 +358,18 @@ bool apply_patches(const std::string& filepath, const std::vector<DetectedPatch>
 
 
 
-int get_patch_option(std::string& s_path) {
-    bool auto_path = resolve_executable_path("C:\\Program Files\\Sublime Text\\sublime_text.exe", "s_t", s_path);
+int e_get_patch_option(std::string& e_path) {
+    bool auto_path = resolve_executable_path("C:\\Program Files\\Sublime Text\\sublime_text.exe", "st", e_path);
 
     int option = 0;
-    std::cout << "s_t Patcher by @b1uedev.\n" << std::endl;
+    std::cout << "st_patcher by @b1uedev.\n" << std::endl;
     // Try to check MD5 hash first
-    std::string hash = get_file_md5(s_path);
+    std::string hash = get_file_md5(e_path);
     bool hash_found = false;
     std::string detected_version;
     if (!hash.empty()) {
-        auto it = s_t_versionMap.find(hash);
-        if (it != s_t_versionMap.end()) {
+        auto it = e_versionMap.find(hash);
+        if (it != e_versionMap.end()) {
             hash_found = true;
             detected_version = it->second;
         }
@@ -382,7 +382,7 @@ int get_patch_option(std::string& s_path) {
         std::cout << "Press 0 to quit." << std::endl;
     } else {
         std::cout << "[WARNING] Could not verify original file by MD5 hash.\n";
-        std::string version = detect_version(s_path);
+        std::string version = e_detect_version(e_path);
         if (!version.empty()) {
             std::cout << "Detected version: " << version << std::endl;
         } else {
@@ -395,29 +395,28 @@ int get_patch_option(std::string& s_path) {
     return option;
 }
 
-void handle_s_m() {
-    std::string s_m_path;
+void g_handle() {
+    std::string g_path;
     std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
 
-    resolve_executable_path("C:\\Program Files\\Sublime Merge\\sublime_merge.exe", "s_m", s_m_path);
+    resolve_executable_path("C:\\Program Files\\Sublime Merge\\sublime_merge.exe", "sm", g_path);
 
-    std::string hash = get_file_md5(s_m_path);
+    std::string hash = get_file_md5(g_path);
     if (hash.empty()) {
-        std::cout << "Could not calculate MD5 hash of " << s_m_path << std::endl;
+        std::cout << "Could not calculate MD5 hash of " << g_path << std::endl;
         system("pause");
         return;
     }
 
-    auto it = s_m_versionMap.find(hash);
-    if (it == s_m_versionMap.end()) {
-        std::cout << "[WARNING] Unsupported s_m MD5 hash: " << hash << std::endl;
-        std::cout << "We cannot patch unknown versions automatically because offsets are hardcoded." << std::endl;
+    auto it = g_versionMap.find(hash);
+    if (it == g_versionMap.end()) {
+        std::cout << "[WARNING] Unsupported sm MD5 hash: " << hash << std::endl;
         system("pause");
         return;
     }
 
     const auto& def = it->second;
-    std::cout << "Detected s_m version: " << def.version << std::endl;
+    std::cout << "Detected sm version: " << def.version << std::endl;
     std::cout << "Press 1 to patch and activate." << std::endl;
     std::cout << "Press 0 to quit." << std::endl;
 
@@ -427,8 +426,8 @@ void handle_s_m() {
         return;
     }
 
-    std::cout << "\nStarting patch for s_m build " << def.version << "..." << std::endl;
-    if (apply_patches(s_m_path, def.patches)) {
+    std::cout << "\nStarting patch for sm build " << def.version << "..." << std::endl;
+    if (apply_patches(g_path, def.patches)) {
         msgEnd();
     } else {
         std::cout << "\nSome patches failed or were skipped. Please check output." << std::endl;
@@ -445,26 +444,26 @@ int main() {
         return 1;
     }
 
-    std::cout << "s_t/s_m Patcher by @b1uedev\n" << std::endl;
+    std::cout << "st/sm patcher by @b1uedev\n" << std::endl;
     std::cout << "Select application to patch:\n";
-    std::cout << "1. s_t\n";
-    std::cout << "2. s_m\n";
+    std::cout << "1. st\n";
+    std::cout << "2. sm\n";
     std::cout << "Choose (1-2): ";
     int choice = 0;
     std::cin >> choice;
 
     if (choice == 1) {
-        std::string s_path;
-        int option = get_patch_option(s_path);
+        std::string e_path;
+        int option = e_get_patch_option(e_path);
         switch (option) {
         case 1: {
-            auto detected = detect_patches(s_path);
+            auto detected = e_detect_patches(e_path);
             if (detected.empty()) {
                 std::cout << "\nNo patches detected. Is your ST newly installed?\n" << std::endl;
                 system("pause");
                 break;
             }
-            if (apply_patches(s_path, detected)) {
+            if (apply_patches(e_path, detected)) {
                 msgEnd();
             } else {
                 std::cout << "\nSome patches failed or were skipped. Please check output." << std::endl;
@@ -485,7 +484,7 @@ int main() {
                 break;
             }
 
-            auto detected = detect_patches(custom_path);
+            auto detected = e_detect_patches(custom_path);
             if (detected.empty()) {
                 std::cout << "\nNo patches detected. Is your ST newly installed?\n" << std::endl;
                 system("pause");
@@ -508,7 +507,7 @@ int main() {
             exit(1);
         }
     } else if (choice == 2) {
-        handle_s_m();
+        g_handle();
     } else {
         std::cout << "Invalid application choice." << std::endl;
         system("PAUSE");
