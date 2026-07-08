@@ -226,7 +226,8 @@ std::map<std::string, std::string> g_versionMap = {
     {toLowercase("0b0deaa9546e86fc69db948e2cf21f35"), "2102"},
     {toLowercase("7068c6fb4bc739d2fa9feda2963075f7"), "2083"},
     {toLowercase("E33B76ADA6E7E7577CD4E81A7A4580C7"), "2083"},
-    {toLowercase("cc38b7e3dab6420773962f2c18929669"), "2079"}
+    {toLowercase("cc38b7e3dab6420773962f2c18929669"), "2079"},
+    {toLowercase("80e989a90dfe6d9c17f4985dceaa8942"), "2077"},
 };
 
 std::vector<DetectedPatch> g_detect_patches(const std::string& filename) {
@@ -241,7 +242,7 @@ std::vector<DetectedPatch> g_detect_patches(const std::string& filename) {
     std::vector<uint8_t> is_license_valid_bytes = {0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0xC3}; // mov rax, 1; ret
     if (version == "2083" || version == "2110" || version == "2121" || version == "2123") {
         is_license_valid_bytes = {0x48, 0xC7, 0xC0, 0x19, 0x01, 0x00, 0x00, 0xC3}; // mov rax, 0x119; ret
-    } else if (version == "2102") {
+    } else if (version <= "2079" || version == "2102") {
         is_license_valid_bytes = {0x48, 0xC7, 0xC0, 0x00, 0x00, 0x00, 0x00, 0xC3}; // mov rax, 0; ret
     }
     std::vector<uint8_t> ret0_bytes = {0x48, 0x31, 0xC0, 0xC3}; // xor rax, rax; ret
@@ -251,7 +252,11 @@ std::vector<DetectedPatch> g_detect_patches(const std::string& filename) {
     std::vector<uint8_t> thread_notification_patch = ret0_bytes;
     std::vector<uint8_t> crash_reporter_patch = ret0_bytes;
 
-    if (version == "2083") {
+    if (version <= "2079") {
+        thread_check_patch = {};
+        thread_notification_patch = {};
+        crash_reporter_patch = {};
+    } else if (version == "2083") {
         thread_check_patch = ret_bytes;
         thread_notification_patch = ret_bytes;
         crash_reporter_patch = {};
@@ -261,6 +266,7 @@ std::vector<DetectedPatch> g_detect_patches(const std::string& filename) {
         // is_license_valid
         { {
             PatchSig("41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ? ? ? ? 4C 89 CB 4C 89 44 24 68 48 89 D7 49 89"), // 2102, 2110, 2125
+            PatchSig("55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 80 00 00 00 48 C7 85 F0 01 00 00 FE FF FF FF 4C 89 8D D8 01 00 00 4C 89 85 E0 01 00 00 49 89 D4 48 89 CE 31 C0 48 8D 0D"), // 2079
             PatchSig("55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 80 00 00 00 48 C7 85 E0 01 00 00 FE FF FF FF 4D 89 CC 4D 89 C7 48 89 95 D0 01 00 00 48 89 CE")  // 2083
           }, is_license_valid_bytes, "is_license_valid" },
         // persistent_license_check_1 & 2
@@ -272,6 +278,7 @@ std::vector<DetectedPatch> g_detect_patches(const std::string& filename) {
         { {
             PatchSig("41 57 41 56 56 57 53 48 81 EC ? ? ? ? 0F 29 B4 24 D0 04 00 00 48 89"), // 2110 & 2125
             PatchSig("56 57 53 48 83 EC 20 89 D6 48 89 CF B9 28 00 00 00 E8 ? ? ? ? 48 89"), // 2102
+            PatchSig("55 56 57 48 81 EC ? ? ? ? 48 8D AC 24 80 00 00 00 0F 29 B5 ? ? ? ? 48 C7 85 48 03 00 00 FE FF FF FF 48 89 CF"), // 2079
             PatchSig("55 56 57 48 81 EC D0 03 00 00 48 8D AC 24 80 00 00 00 48 C7 85 48 03 00 00 FE FF FF FF 48 89 CF")  // 2083
           }, thread_check_patch, "thread_check_license_func" },
         // thread_license_notification_func
